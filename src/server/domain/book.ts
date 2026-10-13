@@ -189,4 +189,15 @@ export interface BookState {
   marks: Record<string, Mark>;
   asOf: Date;
   killSwitchActive: boolean;
+  /**
+   * Live data-driven risk-category map (lowercase assetId → RiskCategory).
+   * Produced by the AssetCategorizer service from CoinGecko market-cap +
+   * volume + genesis-date data. When present, `categorizeAsset` uses this
+   * INSTEAD of the static ASSET_CATEGORIES table. When absent (demo book,
+   * client-side components, or CoinGecko is down), the static table is
+   * the fallback.
+   *
+   * See src/server/services/asset-categorizer.ts for the scoring model.
+   */
+  categoryMap?: Record<string, import("../domain/bankroll").RiskCategory>;
 }

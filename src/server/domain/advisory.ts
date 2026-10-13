@@ -40,8 +40,15 @@ import type { Sleeve } from "./bankroll";
  *      is comparing. `target` is derived from regime posture, broken
  *      down to the asset level (proportional to current intra-sleeve
  *      weights — preserves relative bets inside a sleeve).
- *   - `deltaBps`       : target - current, in bps. May be negative for
- *      "reduce". Clamped to ±maxSingleBetBps per trade.
+ *   - `driftBps`       : target - current, in bps. INFORMATIONAL — the
+ *      raw size of the gap the advisor is reacting to. May be larger
+ *      than ±maxSingleBetBps; never clamped, never zeroed by the
+ *      deadband. Shown in the UI as "Drift" so the owner sees the full
+ *      gap regardless of how much of it is actionable this cycle.
+ *   - `deltaBps`      : the ACTIONABLE trade size for THIS rebalance
+ *      cycle, in bps. Derived from drift but (a) zeroed by the ±500 bps
+ *      deadband (hold) and (b) clamped to ±maxSingleBetBps (kasino
+ *      max-bet). Shown in the UI as "Trade". Negative for "reduce".
  *   - `notionalChange` : delta × NAV / 10000, in book currency. String
  *      for fixed-point display. Negative for "reduce".
  *   - `reason`         : one sentence — why this action.
@@ -57,6 +64,7 @@ export const AllocationAdviceSchema = z.object({
   action: z.enum(["add", "reduce", "hold", "exit"]),
   currentWeightBps: z.number().int(),
   targetWeightBps: z.number().int(),
+  driftBps: z.number().int(),
   deltaBps: z.number().int(),
   notionalChange: z.string(),
   reason: z.string().min(1),
@@ -207,6 +215,16 @@ export const AdvisoryOpinionSchema = z.object({
   opportunities: z.array(OpportunitySchema),
   warnings: z.array(WarningSchema),
   summary: z.string().min(1),
+  /**
+   * Per-asset categorization details (score breakdown + reason) from
+   * the data-driven AssetCategorizer. Present when live CoinGecko data
+   * drove the categorization; absent when the static fallback table
+   * was used. The UI uses this to show WHY each asset got its category
+   * (market cap score, volume score, age score, composite, reason).
+   */
+  categorization: z
+    .record(z.string(), z.custom<import("../lib/asset-metrics").CategorizationResult>())
+    .optional(),
 });
 export type AdvisoryOpinion = z.infer<typeof AdvisoryOpinionSchema>;
 

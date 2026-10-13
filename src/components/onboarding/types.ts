@@ -73,6 +73,14 @@ export const ONBOARDING_UNIVERSE = [
   { id: "XRP", name: "XRP", category: "balanced" as const },
   { id: "XLM", name: "Stellar Lumens", category: "balanced" as const },
   { id: "FLR", name: "Flare", category: "balanced" as const },
+  // ISO 20022-aligned tokens (per eier direction)
+  // Static fallback = balanced; the live AssetCategorizer scores them by
+  // mcap/vol/age at runtime (XMR + HBAR land balanced, XDC + IOTA land
+  // aggressive — see src/server/services/asset-categorizer.ts).
+  { id: "XDC", name: "XDC Network", category: "balanced" as const },
+  { id: "IOTA", name: "IOTA", category: "balanced" as const },
+  { id: "HBAR", name: "Hedera", category: "balanced" as const },
+  { id: "XMR", name: "Monero", category: "balanced" as const },
   // balanced — established L1/L2 + DeFi blue-chips
   { id: "SOL", name: "Solana", category: "balanced" as const },
   { id: "ARB", name: "Arbitrum", category: "balanced" as const },

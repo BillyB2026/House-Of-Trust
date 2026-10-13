@@ -178,17 +178,37 @@ const ASSET_CATEGORIES: Readonly<Record<string, RiskCategory>> = Object.freeze({
   xrp: RiskCategory.Balanced,
   xlm: RiskCategory.Balanced,
   flr: RiskCategory.Balanced,
+  // ISO 20022-aligned tokens (per eier direction — static fallback only;
+  // the live AssetCategorizer scores them by mcap/vol/age at runtime)
+  xdc: RiskCategory.Balanced,
+  iota: RiskCategory.Balanced,
+  hbar: RiskCategory.Balanced,
+  xmr: RiskCategory.Balanced,
 });
 
 /**
  * Categorize an asset by id. Case-insensitive. Unknown assets default
  * to `aggressive` — the owner must opt them down deliberately.
  *
- * This is a pure lookup; it has no side effects and no I/O. The advisor
- * calls it once per position. The mandate may carry overrides (planned
- * in a later phase); until then, this mapping is the single source of
- * truth for "which sleeve is this asset in".
+ * This lookup now supports a LIVE OVERRIDE MAP (produced by the
+ * AssetCategorizer service from CoinGecko market data). When `overrides`
+ * is provided (the advisory flow passes `bookState.categoryMap`), the
+ * live data-driven category takes precedence over the static table.
+ * When `overrides` is null/undefined (client-side components, demo
+ * book, or when CoinGecko is down), the static `ASSET_CATEGORIES`
+ * table is the fallback — so the function is still callable from
+ * sync client code.
+ *
+ * See `src/server/services/asset-categorizer.ts` for the scoring model
+ * (market cap 50% + volume 30% + age 20% → composite score → category).
  */
-export function categorizeAsset(assetId: string): RiskCategory {
-  return ASSET_CATEGORIES[assetId.toLowerCase()] ?? RiskCategory.Aggressive;
+export function categorizeAsset(
+  assetId: string,
+  overrides?: Record<string, RiskCategory>,
+): RiskCategory {
+  const key = assetId.toLowerCase();
+  if (overrides && key in overrides) {
+    return overrides[key];
+  }
+  return ASSET_CATEGORIES[key] ?? RiskCategory.Aggressive;
 }

@@ -89,12 +89,23 @@ export async function GET() {
     const detector = createRegimeDetector();
     const advisor = createAdvisor();
 
-    const regime = detector.detect(advisoryInput.marks);
+    // Use the LIVE metrics-based detection when CoinGecko data is available;
+    // fall back to the old history-based path when it's not. The live path
+    // uses real 30d/90d/200d momentum + ATH drawdown from CoinGecko and
+    // excludes stablecoins (which carry no regime information).
+    let regime;
+    if (advisoryInput.priceSource === "live" && advisoryInput.regimeMetrics) {
+      const assetIds = advisoryInput.bookState.positions.map((p) => p.assetId);
+      regime = detector.detectWithMetrics(assetIds, advisoryInput.regimeMetrics);
+    } else {
+      regime = detector.detect(advisoryInput.marks);
+    }
     const opinion = advisor.advise({
       bookState: advisoryInput.bookState,
       mandate: advisoryInput.mandate,
       regime,
       principles: advisoryInput.principles,
+      categorization: advisoryInput.categorization,
     });
 
     // Re-parse through the schema before returning so a malformed

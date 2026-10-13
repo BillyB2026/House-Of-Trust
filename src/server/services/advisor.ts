@@ -45,11 +45,17 @@ import { AdvisoryOpinionSchema } from "../domain/advisory";
  */
 
 /** Input to the advisor — the four things it needs at decision time. */
-export interface AdvisorInput {
+export interface AdvisoryInput {
   bookState: BookState;
   mandate: Mandate;
   regime: RegimeState;
   principles: BankrollPrinciples;
+  /** Per-asset categorization details (score breakdown + reason) from
+   * the AssetCategorizer. Optional — present when live CoinGecko data
+   * drove the categorization; absent when the static fallback table
+   * was used. The advisor surfaces this on the opinion so the UI can
+   * show WHY each asset got its category. */
+  categorization?: Record<string, import("../lib/asset-metrics").CategorizationResult>;
 }
 
 /** The advisor interface — one method, pure function. */
@@ -143,6 +149,7 @@ export class HouseAdvisor implements Advisor {
       opportunities,
       warnings,
       summary,
+      categorization: input.categorization,
     };
 
     // Validate before returning — a malformed opinion never reaches the UI.
@@ -224,7 +231,7 @@ export class HouseAdvisor implements Advisor {
     };
 
     for (const position of bookState.positions) {
-      const category = categorizeAsset(position.assetId);
+      const category = categorizeAsset(position.assetId, bookState.categoryMap);
       const mark = bookState.marks[position.assetId];
       const price = mark ? Number(mark.price) : 0;
       const qty = Number(position.quantity);
@@ -293,10 +300,12 @@ export class HouseAdvisor implements Advisor {
    *     proportional to their current intra-sleeve weights (preserves
    *     relative bets inside a sleeve).
    *   - compute the per-asset target weight in bps.
-   *   - compute drift = target - current.
-   *   - if drift > +500 bps → "add", delta = +min(drift, maxSingleBetBps)
-   *   - if drift < -500 bps → "reduce", delta = -min(|drift|, maxSingleBetBps)
-   *   - else → "hold", delta = 0.
+   *   - compute drift = target - current (INFORMATIONAL, unthrottled —
+   *     exposed as `driftBps` so the UI can show the full gap).
+   *   - compute the actionable trade from drift:
+   *     if drift > +500 bps → "add",    delta = +min(drift, maxSingleBetBps)
+   *     if drift < -500 bps → "reduce", delta = -min(|drift|, maxSingleBetBps)
+   *     else                → "hold",   delta = 0           (deadband)
    *   - if the asset is NOT in the mandate universe → "exit" instead.
    *
    * notionalChange = (delta/10000) × NAV, formatted as a money string.
@@ -321,7 +330,7 @@ export class HouseAdvisor implements Advisor {
       const value = qty * price;
       const currentBps = Math.round((value / nav) * 10000);
 
-      const category = categorizeAsset(position.assetId);
+      const category = categorizeAsset(position.assetId, bookState.categoryMap);
       const sleeve = sleeves.find((s) => s.category === category);
       if (!sleeve) continue; // unreachable: every position has a category
 
@@ -365,6 +374,7 @@ export class HouseAdvisor implements Advisor {
         action,
         currentWeightBps: currentBps,
         targetWeightBps: targetBps,
+        driftBps: driftBps,
         deltaBps,
         notionalChange: this.formatSignedMoney(notionalChange),
         reason,
@@ -386,7 +396,7 @@ export class HouseAdvisor implements Advisor {
       const mark = bookState.marks[position.assetId];
       const price = mark ? Number(mark.price) : 0;
       const qty = Number(position.quantity);
-      out[categorizeAsset(position.assetId)] += qty * price;
+      out[categorizeAsset(position.assetId, bookState.categoryMap)] += qty * price;
     }
     return out;
   }

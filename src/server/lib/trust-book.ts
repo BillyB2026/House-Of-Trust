@@ -19,7 +19,10 @@ import type { RegimeMark } from "../services/regime-detector";
 
 import type { TrustWithRelations } from "../services/trust-service";
 import { referencePrice } from "./reference-prices";
-import { fetchLivePrices } from "./coingecko-client";
+import { fetchLivePrices, fetchBtcHistory, computeMomentumFromHistory } from "./coingecko-client";
+import { buildCategoryMap } from "../services/asset-categorizer";
+import type { MarketMetricsMap, CategorizationResult } from "./asset-metrics";
+import type { RegimeMetrics } from "../services/regime-detector";
 
 /**
  * Bridge fra Trust (Prisma) → advisory-input (BookState + Mandate +
@@ -61,26 +64,38 @@ export interface AdvisoryInput {
    * REFERENCE_PRICES. Advisory-ruten propagerer dette til /api/advisory
    * så UI-en (Task 38) kan vise Live-pulse vs Fallback-badge. */
   priceSource: "live" | "fallback";
+  /** Per-asset categorization details (score + breakdown + reason) from
+   * the data-driven AssetCategorizer. Present only when priceSource is
+   * "live" (CoinGecko data drove the categorization). Absent when the
+   * static fallback table was used. The advisor surfaces this on the
+   * AdvisoryOpinion so the UI can show WHY each asset got its category. */
+  categorization?: Record<string, CategorizationResult>;
+  /** Per-asset regime metrics (momentum + drawdown) for the regime
+   * detector. Present only when priceSource is "live". The advisory route
+   * uses detectWithMetrics() when this is set; otherwise it falls back to
+   * the old history-based detect(). Keyed by lowercase assetId. */
+  regimeMetrics?: Record<string, RegimeMetrics>;
 }
 
 /**
- * BTC 90-dagers history (7 samples, slight uptrend) — samme datasett
- * som demo-book.ts bruker, duplikat her så trust-book.ts er selvstendig.
+ * BTC 90-dagers history (7 samples, slight uptrend) — fallback used when
+ * CoinGecko is unreachable. Scaled to realistic October 2026 prices.
+ * Ends at $83,000 (matches the updated BTC reference price).
  *
- * 7 samples, log-return over window = ln(60000/40000) = +40.5%. SMA(7)
- * ≈ 50,286 < 60,000 → sma-200 bull. Monoton up → drawdown-from-peak
- * neutral. Realized vol ~ 30-40% annualized.
+ * 7 samples, log-return over window = ln(83000/55000) = +41.1%. SMA(7)
+ * ≈ 68,571 < 83,000 → sma-200 bull. Monoton up → drawdown neutral.
+ * Realized vol ~ 30-40% annualized.
  *
  * Phase 1 bytter dette ut med live CoinGecko-historikk via MarketService.
  */
 const BTC_REFERENCE_HISTORY: { t: Date; price: string }[] = [
-  { t: new Date("2026-07-11T12:00:00.000Z"), price: "40000" },
-  { t: new Date("2026-07-26T12:00:00.000Z"), price: "42500" },
-  { t: new Date("2026-08-10T12:00:00.000Z"), price: "46000" },
-  { t: new Date("2026-08-25T12:00:00.000Z"), price: "51000" },
-  { t: new Date("2026-09-09T12:00:00.000Z"), price: "55000" },
-  { t: new Date("2026-09-24T12:00:00.000Z"), price: "57500" },
-  { t: new Date("2026-10-09T12:00:00.000Z"), price: "60000" },
+  { t: new Date("2026-07-11T12:00:00.000Z"), price: "55000" },
+  { t: new Date("2026-07-26T12:00:00.000Z"), price: "58500" },
+  { t: new Date("2026-08-10T12:00:00.000Z"), price: "63500" },
+  { t: new Date("2026-08-25T12:00:00.000Z"), price: "70500" },
+  { t: new Date("2026-09-09T12:00:00.000Z"), price: "76000" },
+  { t: new Date("2026-09-24T12:00:00.000Z"), price: "79500" },
+  { t: new Date("2026-10-09T12:00:00.000Z"), price: "83000" },
 ];
 
 /**
@@ -220,8 +235,69 @@ export async function buildAdvisoryInputFromTrust(
     });
   }
 
+  // CRITICAL: BTC is the regime barometer — always inject a BTC mark into
+  // regimeMarks if the trust doesn't hold BTC. Without this, the fallback
+  // detect() path (when CoinGecko is down) would pick the first non-stable
+  // asset as the anchor instead of BTC. The live path (detectWithMetrics)
+  // already always uses BTC, but the fallback path reads marks[].
+  if (!seenAssets.has("BTC")) {
+    const btcRef = referencePrice("BTC");
+    regimeMarks.push({
+      assetId: "BTC",
+      price: String(btcRef.price),
+      history: BTC_REFERENCE_HISTORY,
+    });
+    seenAssets.add("BTC");
+  }
+
   // Mode fra trusten — Book.mode er synkronisert av trust-service.
   const mode = (trust.mode as OperatingMode) || OperatingMode.Observe;
+
+  // ---- Live data-driven categorization (owner direction: replace the
+  //      static ASSET_CATEGORIES table with a scoring model based on
+  //      market cap + volume + age). We build a MarketMetricsMap from
+  //      the same CoinGecko `/coins/markets` response that gave us the
+  //      prices, then run it through the categorizer. The resulting
+  //      categoryMap overrides the static table inside `categorizeAsset`.
+  //      If CoinGecko is down (source="fallback"), marketCaps/volumes are
+  //      empty → all non-stable assets score 0 → aggressive. That is too
+  //      harsh when we KNOW the static table has good data, so we only
+  //      attach the live map when the source is "live".
+  let categoryMap: Record<string, import("../domain/bankroll").RiskCategory> | undefined;
+  let categorization: Record<string, CategorizationResult> | undefined;
+  let regimeMetrics: Record<string, RegimeMetrics> | undefined;
+  if (livePrices.source === "live") {
+    const assetIds = book.positions.map((p) => p.assetId);
+    const marketMetrics: MarketMetricsMap = {};
+    regimeMetrics = {};
+    for (const id of assetIds) {
+      const key = id.toLowerCase();
+      marketMetrics[key] = {
+        marketCapUsd: livePrices.marketCaps[key] ?? null,
+        volume24hUsd: livePrices.volumes[key] ?? null,
+        priceUsd: livePrices.prices[key] ?? null,
+      };
+    }
+    const result = buildCategoryMap(assetIds, marketMetrics);
+    categoryMap = result.categoryMap;
+    categorization = result.details;
+
+    // Fetch BTC's real 200-day price history and compute live momentum
+    // signals for the regime detector. This replaces the old synthetic
+    // hardcoded history with real CoinGecko daily prices. BTC is the
+    // regime anchor — we only need its history.
+    const btcHistory = await fetchBtcHistory();
+    if (btcHistory) {
+      const momentum = computeMomentumFromHistory(btcHistory);
+      regimeMetrics["btc"] = {
+        assetId: "BTC",
+        pct30d: momentum.pct30d,
+        pct90d: momentum.pct90d,
+        pct200d: momentum.pct200d,
+        maxDrawdown: momentum.maxDrawdown,
+      };
+    }
+  }
 
   const bookState: BookState = {
     bookId,
@@ -233,6 +309,7 @@ export async function buildAdvisoryInputFromTrust(
     marks: marksRecord,
     asOf: now,
     killSwitchActive: trust.killedAt !== null,
+    categoryMap,
   };
 
   // Mandate — samme defaults som demo-boken. Phase 2 bytter til
@@ -260,7 +337,7 @@ export async function buildAdvisoryInputFromTrust(
 
   const principles: BankrollPrinciples = BankrollPrinciplesSchema.parse({});
 
-  return { bookState, mandate, principles, marks: regimeMarks, priceSource: livePrices.source };
+  return { bookState, mandate, principles, marks: regimeMarks, priceSource: livePrices.source, categorization, regimeMetrics };
 }
 
 // ---------------------------------------------------------------------------

@@ -22,11 +22,15 @@ import type { AllocationAdvice } from "@/server/domain/advisory";
  * AllocationAdviceTable — per-asset allocation advice (one row per
  * position).
  *
- * Columns: Asset | Risk category | Action | Current | Target | Delta |
+ * Columns: Asset | Risk category | Action | Current | Target | Drift | Trade |
  * Notional change (book currency) | Reason.
  *
- * Sortable on Current% and Delta% (asc/desc toggle). The table is
- * wrapped in a ScrollArea with max-h-96 so a long book does not blow
+ * `Drift`  = target − current (INFORMATIONAL, unthrottled — the full gap).
+ * `Trade`  = the throttled bet for this cycle (deadband → 0, clamped to
+ *            ±maxSingleBetBps). `notionalChange` is derived from Trade.
+ *
+ * Sortable on Current%, Drift%, and Trade% (asc/desc toggle). The table
+ * is wrapped in a ScrollArea with max-h-96 so a long book does not blow
  * up the dashboard height.
  *
  * Action chip colors:
@@ -41,7 +45,7 @@ import type { AllocationAdvice } from "@/server/domain/advisory";
  *   - src/server/domain/advisory.ts: AllocationAdvice.
  */
 
-type SortKey = "current" | "delta" | "asset" | "target";
+type SortKey = "current" | "delta" | "drift" | "asset" | "target";
 type SortOrder = "asc" | "desc";
 
 const ACTION_META: Record<
@@ -135,6 +139,8 @@ export function AllocationAdviceTable({
         cmp = a.currentWeightBps - b.currentWeightBps;
       } else if (sortKey === "target") {
         cmp = a.targetWeightBps - b.targetWeightBps;
+      } else if (sortKey === "drift") {
+        cmp = a.driftBps - b.driftBps;
       } else if (sortKey === "delta") {
         cmp = a.deltaBps - b.deltaBps;
       }
@@ -215,7 +221,17 @@ export function AllocationAdviceTable({
                   <TableHead className="text-xs text-right">Target</TableHead>
                   <TableHead className="text-xs">
                     <SortHeader
-                      label="Delta"
+                      label="Drift"
+                      sortKey="drift"
+                      activeKey={sortKey}
+                      order={sortOrder}
+                      onToggle={toggleSort}
+                      align="right"
+                    />
+                  </TableHead>
+                  <TableHead className="text-xs">
+                    <SortHeader
+                      label="Trade"
                       sortKey="delta"
                       activeKey={sortKey}
                       order={sortOrder}
@@ -233,7 +249,7 @@ export function AllocationAdviceTable({
                 {sorted.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={9}
                       className="py-6 text-center text-xs text-muted-foreground"
                     >
                       No positions held.
@@ -271,6 +287,18 @@ export function AllocationAdviceTable({
                       </TableCell>
                       <TableCell className="text-right house-num text-sm text-muted-foreground">
                         {(row.targetWeightBps / 100).toFixed(2)}%
+                      </TableCell>
+                      <TableCell
+                        className={`text-right house-num text-sm ${
+                          row.driftBps > 0
+                            ? "text-allow-foreground"
+                            : row.driftBps < 0
+                              ? "text-warn-foreground"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        {row.driftBps > 0 ? "+" : ""}
+                        {(row.driftBps / 100).toFixed(2)}%
                       </TableCell>
                       <TableCell
                         className={`text-right house-num text-sm ${

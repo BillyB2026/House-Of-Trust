@@ -42,8 +42,8 @@ export const REFERENCE_PRICES: Readonly<Record<string, number>> = Object.freeze(
   reth: 2500,
   cbeth: 2500,
   // conservative
-  btc: 60000,
-  wbtc: 60000,
+  btc: 83000,
+  wbtc: 83000,
   eth: 2500,
   // balanced
   sol: 130,
@@ -54,9 +54,14 @@ export const REFERENCE_PRICES: Readonly<Record<string, number>> = Object.freeze(
   aave: 100,
   ldo: 2.0,
   // XRP-ecosystem L1s (per eier direction — default portfolio)
-  xrp: 2.30,
-  xlm: 0.35,
-  flr: 0.020,
+  xrp: 1.37, // ~$1.37 as of Oct 2026
+  xlm: 0.19, // ~$0.19 as of Oct 2026
+  flr: 0.007, // ~$0.007 as of Oct 2026
+  // ISO 20022-aligned tokens (per eier direction)
+  xdc: 0.035, // XDC Network — ~$0.035 as of Oct 2026
+  iota: 0.05, // IOTA — ~$0.05 as of Oct 2026
+  hbar: 0.09, // Hedera — ~$0.09 as of Oct 2026
+  xmr: 530, // Monero (privacy coin) — ~$530 as of Oct 2026
   // aggressive (demo)
   doge: 0.1,
 });
