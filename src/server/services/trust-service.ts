@@ -43,6 +43,7 @@ import {
 } from "../domain/ethics";
 import { referencePrice } from "../lib/reference-prices";
 import { fetchLivePrices } from "../lib/coingecko-client";
+import { buildCategoryMap } from "./asset-categorizer";
 import type { AsyncResult } from "./types";
 import { HouseError } from "../domain/errors";
 
@@ -887,14 +888,34 @@ export class PrismaTrustService implements TrustService {
       // Index accounts by id so each position can resolve its venue.
       const accountsById = new Map(book.accounts.map((a) => [a.id, a]));
 
+      // Live prices + category map (consistent with getPortfolio + Advisory).
+      const livePrices = await fetchLivePrices();
+      let categoryMap: Record<string, RiskCategory> | undefined;
+      if (livePrices.source === "live") {
+        const assetIds = book.positions.map((p) => p.assetId);
+        const marketMetrics: Record<string, { marketCapUsd: number | null; volume24hUsd: number | null; priceUsd: number | null }> = {};
+        for (const id of assetIds) {
+          const key = id.toLowerCase();
+          marketMetrics[key] = {
+            marketCapUsd: livePrices.marketCaps[key] ?? null,
+            volume24hUsd: livePrices.volumes[key] ?? null,
+            priceUsd: livePrices.prices[key] ?? null,
+          };
+        }
+        categoryMap = buildCategoryMap(assetIds, marketMetrics).categoryMap;
+      }
+
       let nav = 0;
       const rows: PositionRow[] = book.positions.map((p) => {
         const account = p.account ?? (p.accountId ? accountsById.get(p.accountId) ?? null : null);
         const venue = account?.venue ?? "<orphan>";
         const venueKind = (account?.kind ?? "cex") as PositionRow["venueKind"];
-        const category = categorizeAsset(p.assetId);
+        const category = categorizeAsset(p.assetId, categoryMap);
         const qty = Number(p.quantity);
-        const price = referencePrice(p.assetId).price;
+        // Live price first, fallback to reference price.
+        const live = livePrices.prices[p.assetId.toLowerCase()];
+        const ref = referencePrice(p.assetId);
+        const price = typeof live === "number" && Number.isFinite(live) ? live : ref.price;
         const value = Number.isFinite(qty) && qty > 0 ? qty * price : 0;
         nav += value;
         return {
@@ -1180,6 +1201,26 @@ export class PrismaTrustService implements TrustService {
       // uansett; UI-en viser Live-pulse ELLER Fallback-badge (Task 38).
       const livePrices = await fetchLivePrices();
 
+      // Live data-driven category map (consistent with the Advisory tab).
+      // When CoinGecko is live, we build a category map from market-cap +
+      // volume + age so the Portfolio tab shows the SAME categories as the
+      // Advisory tab. When CoinGecko is down, categorizeAsset falls back
+      // to the static ASSET_CATEGORIES table.
+      let categoryMap: Record<string, RiskCategory> | undefined;
+      if (livePrices.source === "live") {
+        const assetIds = positions.map((p) => p.assetId);
+        const marketMetrics: Record<string, { marketCapUsd: number | null; volume24hUsd: number | null; priceUsd: number | null }> = {};
+        for (const id of assetIds) {
+          const key = id.toLowerCase();
+          marketMetrics[key] = {
+            marketCapUsd: livePrices.marketCaps[key] ?? null,
+            volume24hUsd: livePrices.volumes[key] ?? null,
+            priceUsd: livePrices.prices[key] ?? null,
+          };
+        }
+        categoryMap = buildCategoryMap(assetIds, marketMetrics).categoryMap;
+      }
+
       // Index accounts by id so we can resolve venue for orphan positions
       // (Position.accountId satt men Account-relasjonen ikke populert).
       const accountsById = new Map(book.accounts.map((a) => [a.id, a]));
@@ -1245,7 +1286,7 @@ export class PrismaTrustService implements TrustService {
         const value = qty * price;
         nav += value;
 
-        const category = categorizeAsset(p.assetId);
+        const category = categorizeAsset(p.assetId, categoryMap);
         valueByCategory[category] += value;
 
         // Resolve venue + venueKind from Position.account. Orphan

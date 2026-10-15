@@ -61,7 +61,7 @@ const NOW = new Date("2026-10-09T12:00:00.000Z");
 /** Demo positions: assetId, quantity, price (in book currency). */
 const DEMO_POSITIONS: { assetId: string; quantity: string; price: string }[] = [
   { assetId: "USDC", quantity: "75000", price: "1" },
-  { assetId: "BTC", quantity: "1.2", price: "60000" },
+  { assetId: "BTC", quantity: "1.2", price: "83000" },
   { assetId: "ETH", quantity: "40", price: "2500" },
   { assetId: "SOL", quantity: "100", price: "130" },
   { assetId: "ARB", quantity: "5000", price: "0.80" },
@@ -70,23 +70,23 @@ const DEMO_POSITIONS: { assetId: string; quantity: string; price: string }[] = [
 
 /**
  * BTC 90-day history (7 samples, slight uptrend). The "now" sample
- * matches the BTC mark price (60,000) so the detector sees the latest
+ * matches the BTC mark price (83,000) so the detector sees the latest
  * point as the current price.
  *
- * Log-return over window = ln(60000/40000) = 0.405 = +40.5%.
- * SMA(7) = (40000+42500+46000+51000+55000+57500+60000)/7 ≈ 50,286.
- * Current 60,000 > SMA 50,286 → sma-200 bull.
+ * Log-return over window = ln(83000/55000) = +41.1%.
+ * SMA(7) = (55000+58500+63500+70500+76000+79500+83000)/7 ≈ 68,571.
+ * Current 83,000 > SMA 68,571 → sma-200 bull.
  * Drawdown from peak = 0% (monotonic up) → drawdown-from-peak neutral.
  * Realized vol = stdev of daily log-returns × sqrt(365) ≈ 30-40% annualized.
  */
 const BTC_HISTORY: { t: Date; price: string }[] = [
-  { t: new Date("2026-07-11T12:00:00.000Z"), price: "40000" },
-  { t: new Date("2026-07-26T12:00:00.000Z"), price: "42500" },
-  { t: new Date("2026-08-10T12:00:00.000Z"), price: "46000" },
-  { t: new Date("2026-08-25T12:00:00.000Z"), price: "51000" },
-  { t: new Date("2026-09-09T12:00:00.000Z"), price: "55000" },
-  { t: new Date("2026-09-24T12:00:00.000Z"), price: "57500" },
-  { t: new Date("2026-10-09T12:00:00.000Z"), price: "60000" },
+  { t: new Date("2026-07-11T12:00:00.000Z"), price: "55000" },
+  { t: new Date("2026-07-26T12:00:00.000Z"), price: "58500" },
+  { t: new Date("2026-08-10T12:00:00.000Z"), price: "63500" },
+  { t: new Date("2026-08-25T12:00:00.000Z"), price: "70500" },
+  { t: new Date("2026-09-09T12:00:00.000Z"), price: "76000" },
+  { t: new Date("2026-09-24T12:00:00.000Z"), price: "79500" },
+  { t: new Date("2026-10-09T12:00:00.000Z"), price: "83000" },
 ];
 
 /**

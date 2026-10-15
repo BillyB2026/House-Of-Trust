@@ -41,6 +41,7 @@ import {
   type WizardPositionV2,
 } from "./types";
 import { categorizeAsset } from "@/server/domain/bankroll";
+import { XlsxUpload } from "./xlsx-upload";
 
 /**
  * PageAssets — Side 4 of the multi-page onboarding (Task 47-49).
@@ -125,6 +126,37 @@ export function PageAssets({ form, onFormChange }: PageAssetsProps) {
     });
   };
 
+  /**
+   * Handle an XLSX import: replace wipes the current rows and uses only the
+   * parsed ones; append adds the parsed rows after the existing ones. In
+   * append mode we drop the last row if it's still the empty placeholder
+   * (so the trustee doesn't end up with a blank row sandwiched between
+   * their typed rows and the imported ones).
+   */
+  const handleImport = (
+    imported: WizardPositionV2[],
+    mode: "replace" | "append",
+  ) => {
+    if (mode === "replace") {
+      onFormChange({
+        positions: imported.length > 0 ? imported : [makeEmptyPositionV2()],
+      });
+      return;
+    }
+    // append
+    const cleaned = [...positions];
+    const last = cleaned[cleaned.length - 1];
+    if (
+      last &&
+      last.assetId.trim() === "" &&
+      last.quantity.trim() === "" &&
+      last.venue.trim() === ""
+    ) {
+      cleaned.pop();
+    }
+    onFormChange({ positions: [...cleaned, ...imported] });
+  };
+
   return (
     <section
       aria-labelledby="page-assets-title"
@@ -169,6 +201,11 @@ export function PageAssets({ form, onFormChange }: PageAssetsProps) {
           </span>
         </div>
       </div>
+
+      {/* XLSX import — optional fast-path: upload a spreadsheet instead of
+          typing each row by hand. Sits between the live summary and the row
+          list so the trustee sees it before they start typing. */}
+      <XlsxUpload onImport={handleImport} />
 
       {/* Row list */}
       <div className="flex flex-col">
